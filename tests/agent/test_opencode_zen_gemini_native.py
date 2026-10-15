@@ -26,7 +26,7 @@ from providers import get_provider_profile
         ("opencode-zen", "gemini-4-argon", "https://opencode.ai/zen", True),
         ("opencode-zen", "gemini-4-argon", "https://opencode.ai/inference/v1", True),
         ("opencode-zen", "glm-5.3", "https://opencode.ai/zen/v1", False),
-        ("opencode-go", "gemini-4-argon", "https://opencode.ai/zen/go/v1", False),
+        ("opencode-go", "gemini-4-argon", "https://opencode.ai/zen/go/v1", True),
         ("opencode-zen", "gemini-4-argon", "https://example.invalid/v1", False),
         ("opencode-zen", "gemini-4-argon", "https://opencode.ai/zen/go/v1", False),
     ],
@@ -98,7 +98,7 @@ def test_main_rebuild_preserves_the_models_wire_contract(provider, model, base_u
 @pytest.mark.parametrize(
     "provider, native",
     [("opencode-zen", True), ("zen", True), ("custom:zen-bridge", True),
-     ("custom:zen-pinned", False), ("opencode-go", False)],
+     ("custom:zen-pinned", False), ("opencode-go", True)],
 )
 def test_auxiliary_resolution_preserves_native_wire_and_small_budget(monkeypatch, provider, native, async_mode, stream):
     from hermes_constants import get_hermes_home
@@ -166,7 +166,8 @@ def test_auxiliary_resolution_preserves_native_wire_and_small_budget(monkeypatch
         body = json.loads(request.content)
         if native:
             method = "streamGenerateContent" if stream else "generateContent"
-            assert request.url.path == f"/zen/v1/models/gemini-4-argon:{method}", request.url
+            root = "/inference/go/v1" if provider == "opencode-go" else "/zen/v1"
+            assert request.url.path == f"{root}/models/gemini-4-argon:{method}", request.url
             assert request.headers["x-goog-api-key"] == "test-key"
             assert body["generationConfig"]["maxOutputTokens"] == 32
             assert body["generationConfig"]["thinkingConfig"]["includeThoughts"] is False
