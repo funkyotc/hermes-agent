@@ -5,12 +5,26 @@ from urllib.parse import urlsplit
 
 GEMINI_NATIVE_PROVIDER_NAMES = frozenset({"gemini", "google", "google-gemini", "google-ai-studio"})
 
+# The Go relay's Google-wire root. Gemini on Go is served only from the documented
+# ``@ai-sdk/google`` endpoint (``/inference/go/v1``); the legacy ``/zen/go/v1`` root answers 404 for
+# ``:generateContent``/``:streamGenerateContent``, and every OpenAI/Anthropic/Responses path on it
+# answers 400 ``ModelProtocolUnsupported``.
+OPENCODE_GO_GEMINI_BASE_URL = "https://opencode.ai/inference/go/v1"
+
 
 def is_opencode_zen_base_url(base_url: str | None) -> bool:
     """An official Zen/Console root, not Go or an arbitrary compatible proxy."""
     url = urlsplit(str(base_url or "").strip())
     return url.hostname == "opencode.ai" and url.path.rstrip("/").lower() in {
         "/zen", "/zen/v1", "/inference", "/inference/v1",
+    }
+
+
+def is_opencode_go_base_url(base_url: str | None) -> bool:
+    """An official Go relay root, in its legacy (``/zen/go``) or documented (``/inference/go``) spelling."""
+    url = urlsplit(str(base_url or "").strip())
+    return url.hostname == "opencode.ai" and url.path.rstrip("/").lower() in {
+        "/zen/go", "/zen/go/v1", "/inference/go", "/inference/go/v1",
     }
 
 
@@ -27,6 +41,20 @@ def is_opencode_zen_gemini_route(provider: str | None, model: str | None, base_u
     return bare_model.startswith("gemini-") and opencode_transport(provider, model, base_url)[0] is not None
 
 
+def is_opencode_go_gemini_route(provider: str | None, model: str | None, base_url: str | None) -> bool:
+    """Gemini on Go changes wire too, but only inside the Go relay; sibling families keep their own."""
+    if not is_opencode_go_base_url(base_url):
+        return False
+    from agent.opencode_affinity import opencode_transport
+    from hermes_cli.models import normalize_opencode_model_id, opencode_provider_family
+
+    family = opencode_provider_family(provider)
+    if family is not None and family != "opencode-go":
+        return False
+    bare_model = normalize_opencode_model_id(provider, model).rsplit("/", 1)[-1].lower()
+    return bare_model.startswith("gemini-") and opencode_transport(provider, model, base_url)[0] is not None
+
+
 def is_native_gemini_route(provider: str | None, model: str | None, base_url: str | None) -> bool:
     """Select a client without labeling a mixed-model relay universally Gemini-native."""
     from agent.gemini_native_adapter import is_native_gemini_base_url
@@ -34,14 +62,18 @@ def is_native_gemini_route(provider: str | None, model: str | None, base_url: st
     return (
         str(provider or "").strip().lower() in GEMINI_NATIVE_PROVIDER_NAMES
         and is_native_gemini_base_url(base_url or "")
-    ) or is_opencode_zen_gemini_route(provider, model, base_url)
+    ) or is_opencode_zen_gemini_route(provider, model, base_url) or is_opencode_go_gemini_route(provider, model, base_url)
 
 
 def is_native_gemini_request(provider: str | None, model: str | None, base_url: str | None) -> bool:
     """Preserve native Google URL shaping while selecting mixed-relay requests per model."""
     from agent.gemini_native_adapter import is_native_gemini_base_url
 
-    return is_native_gemini_base_url(base_url or "") or is_opencode_zen_gemini_route(provider, model, base_url)
+    return (
+        is_native_gemini_base_url(base_url or "")
+        or is_opencode_zen_gemini_route(provider, model, base_url)
+        or is_opencode_go_gemini_route(provider, model, base_url)
+    )
 
 
 def _is_gemini_native_route(provider_norm: str, effective_base: str, model: str = "") -> bool:
@@ -52,7 +84,11 @@ def _is_gemini_native_route(provider_norm: str, effective_base: str, model: str 
         return False
     try:
         from agent.gemini_native_adapter import is_native_gemini_base_url
-        return is_native_gemini_base_url(effective_base) or is_opencode_zen_gemini_route(provider_norm, model, effective_base)
+        return (
+            is_native_gemini_base_url(effective_base)
+            or is_opencode_zen_gemini_route(provider_norm, model, effective_base)
+            or is_opencode_go_gemini_route(provider_norm, model, effective_base)
+        )
     except Exception:
         return False
 
@@ -111,8 +147,9 @@ def _compressor_max_tokens(agent):
             GEMINI_DEFAULT_MAX_OUTPUT_TOKENS, is_native_gemini_base_url
         )
         _gemini_provider = str(agent.provider or "").strip().lower() in GEMINI_NATIVE_PROVIDER_NAMES
-        if _gemini_provider or is_native_gemini_base_url(agent.base_url) or is_opencode_zen_gemini_route(
-            effective_gemini_provider(agent), agent.model, agent.base_url):
+        if (_gemini_provider or is_native_gemini_base_url(agent.base_url)
+                or is_opencode_zen_gemini_route(effective_gemini_provider(agent), agent.model, agent.base_url)
+                or is_opencode_go_gemini_route(effective_gemini_provider(agent), agent.model, agent.base_url)):
             return GEMINI_DEFAULT_MAX_OUTPUT_TOKENS
     return None
 
