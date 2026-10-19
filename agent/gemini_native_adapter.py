@@ -176,7 +176,13 @@ def _normalize_gemini_base_path(base_url: Optional[str]) -> str:
     trimmed = re.sub(r"/openai\Z", "", trimmed, flags=re.IGNORECASE).rstrip("/")
     if not trimmed:
         trimmed = DEFAULT_GEMINI_BASE_URL
-    from agent.gemini_routing import is_opencode_zen_base_url
+    from agent.gemini_routing import (
+        OPENCODE_GO_GEMINI_BASE_URL, is_opencode_go_base_url, is_opencode_zen_base_url,
+    )
+    if is_opencode_go_base_url(trimmed):
+        # Gemini on Go is served only from the documented ``/inference/go`` root: the legacy
+        # ``/zen/go`` root answers 404 for ``:generateContent`` / ``:streamGenerateContent``.
+        return OPENCODE_GO_GEMINI_BASE_URL
     if is_opencode_zen_base_url(trimmed):
         return trimmed if trimmed.lower().endswith("/v1") else f"{trimmed}/v1"
     if is_vertex_express_base_url(trimmed):
